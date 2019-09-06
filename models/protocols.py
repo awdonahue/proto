@@ -1,161 +1,114 @@
+import pathlib
+import importlib
+import logging
 import struct
-from pathlib import Path
+
 from abc import ABC, abstractmethod
-
-import chardet
-
-from models.parser import Parser
+from typing import List
 
 __all__ = ['Mps7']
 
-class Protocol(ABC, Parser):
+class Protocol(ABC):
     @abstractmethod
-    def _decode_binary(self):
-        """ Decode the read file binary string """
+    def _stucture_data(self):
+        """ Structure the bytes data for decoding """
         pass
 
     @abstractmethod
-    def run(self, logger, *args, **kwargs):
-        """ Run the class protocol """
+    def _decode(self):
+        """ Decode the bytes to protocol format """
+        pass
+
+    @abstractmethod
+    def run(self):
+        """ Run protocol on data and return JSON results """
         pass
 
 class Mps7(Protocol):
     """
-    The MPS7 Protocol model
+    Decode binary data
     """
+    SIG = (77, 80, 83, 55) # MPS7
 
-    HEADER_BYTE_SIZES = {
-        'protocol': 4,
-        'version': 1,
-        'records_count': 4,
+    HBYTES = (4, 1, 4) # magic, version, num_records (uint32)
+    RBYTES = (1, 4, 8, 8) # type, utime (uint32), userid (uint64), amount (float64)
+    TOTAL_HBYTES = sum(HBYTES)
+    TOTAL_RBYTES = sum(RBYTES)
+
+    RTYPE = {
+        'debit': 0,
+        'credit': 1,
+        'startautopay': 2,
+        'endautopay': 3,
     }
 
-    RECORD_BYTE_SIZES = {
-        'record_type': 1,
-        'unix_timestamp': 4,
-        'userid': 8,
-        'amount': 8, # If record type is either 'debit' or 'credit'
-    }
+    LOGGER = logging.getLogger(__name__)
 
-    RECORD_TYPE = {
-        0 : 'debit',
-        1 : 'credit',
-        2 : 'startautopay',
-        3 : 'endautopay',
-    }
+    def __init__(self, data: bytes):
+        """ Structure and decode byte data """
+        self._data = data
 
-    def __init__(self, path):
-        super().__init__(path)
+        self._decode()
+        # super().__init__(path)
 
-        self.header = {}
-        self.records = []
 
-        self._decode_binary()
+    def _check_protocol(self):
+        """ Check to make sure """
+        self._header_data = self._data[:self.TOTAL_HBYTES]
+        sig = ''.join([chr(i) for i in self._header_data[:self.HBYTES[0]]]).lower()
 
-    def _decode_binary(self):
-        if self._file_bytes is None:
-            raise RuntimeError('No file bytes to decode')
+        assert sig == self.__class__.__name__.lower(), 'Protocol mismatch. Unable to structure data'
 
-        start_read = 0
-        proto_read = start_read + self.HEADER_BYTE_SIZES['protocol']
-        version_read = proto_read + self.HEADER_BYTE_SIZES['version']
-        count_read = version_read + self.HEADER_BYTE_SIZES['records_count']
+        self._decode()
 
-        endian_order = 'big'
+    def _structure_data(self):
+        """ Structure data to the class protocol format """
 
-        self.header['protocol'] = str(self._file_bytes[start_read:proto_read])
-        self.header['version'] = int.from_bytes(self._file_bytes[proto_read:version_read], byteorder=endian_order)
-        self.header['records_count'] = int.from_bytes(self._file_bytes[version_read:count_read], byteorder=endian_order)
+        self._records_data = self._data[self.TOTAL_HBYTES:]
 
-        #TODO check protocol
-        print(f'Header: {self.header}')
-        print(f'Total bytes: {self._total_bytes}')
-        print(f'Total records: {self.header["records_count"]}\n\n')
+        self.LOGGER.info('Structuring data based on protocol...')
+        read = 0
+        self._drecords = []
+        while read < len(self._records_data):
+            rsize = self.TOTAL_RBYTES if self._records_data[read] in (self.RTYPE['debit'], self.RTYPE['credit']) else sum(self.RBYTES[:3])
+            self._drecords.append(self._records_data[read:read+rsize])
+            read += rsize
 
-        header_size = sum(self.HEADER_BYTE_SIZES.values())
-        # record_size = sum(self.RECORD_BYTE_SIZES.values())
+        self.LOGGER.info('Finished!')
 
-        read = header_size
-        while read < self._total_bytes:
-            record = dict()
+        #TODO Is the header considered a record that goes towards the records counts? We'll assume yes for now...
+        hcount, rcount = ( self._header_data[-1] + 1, len(self._drecords) )
+        self.LOGGER.debug('Header records count: %i. Actual records count: %i', hcount, rcount)
+        assert hcount == rcount, 'Records count does not match headers record count'
+        self.LOGGER.debug('Bytes records:\n %s', '\n'.join(map(str, self._drecords)))
 
-            record['type'] = self.RECORD_TYPE[int.from_bytes(
-                self._file_bytes[read:read + self.RECORD_BYTE_SIZES['record_type']], byteorder=endian_order)]
+    def _decode(self):
+        """ Decode structured data for processing """
+        self._structure_data()
 
-            read += self.RECORD_BYTE_SIZES['record_type']
+        self.LOGGER.info('Decoding structured bytes data...')
+        self._records = []
+        for br in self._drecords:
+            rtype = {v:k for k,v in self.RTYPE.items()}
+            self._records.append((
+                rtype[br[0]],
+                struct.unpack('!I', bytes(br[self.RBYTES[0]:sum(self.RBYTES[:2])]))[0],
+                struct.unpack('!Q', bytes(br[sum(self.RBYTES[:2]):sum(self.RBYTES[:3])]))[0],
+                struct.unpack('!d', bytes(br[sum(self.RBYTES[:3]):sum(self.RBYTES)]))[0] if len(br) == self.TOTAL_RBYTES else None,
+            ))
+        self.LOGGER.info('Finished!')
 
-            record['unix_timestamp'] = int.from_bytes(
-                self._file_bytes[read:read + self.RECORD_BYTE_SIZES['unix_timestamp']], byteorder=endian_order)
+        assert len(self._records) == len(self._drecords), 'Decoded records count does not match binary records count'
+        self.LOGGER.debug('Decoded records:\n %s', '\n'.join(map(str, self._records)))
 
-            read += self.RECORD_BYTE_SIZES['unix_timestamp']
+    @property
+    def version(self) -> int:
+        """ Get binary file protocol version """
+        return self._header_data[sum(self.HBYTES[:1]):sum(self.HBYTES[:2])]
 
-            record['userid'] = int.from_bytes(
-                self._file_bytes[read:read + self.RECORD_BYTE_SIZES['userid']], byteorder=endian_order)
+    @property
+    def records(self) -> List[tuple]:
+        return self._records
 
-            read += self.RECORD_BYTE_SIZES['userid']
-
-            if record['type'] in [self.RECORD_TYPE[0], self.RECORD_TYPE[1]]:
-                record['amount'], = struct.unpack(
-                    '>d', self._file_bytes[read:read + self.RECORD_BYTE_SIZES['amount']])
-
-                read += self.RECORD_BYTE_SIZES['amount']
-
-            self.records.append(record)
-
-    def get_all_records(self) -> list:
-        print(f'Record amount: {len(self.records)}')
-        for record in self.records:
-            print(f'Record: {record}')
-
-        return self.records
-
-    def get_header_data(self) -> dict:
-        """ Get protocol header information """
-        return self.header
-
-    def get_type_total(self, rtype: str) -> str:
-        """ Get total count of record type """
-
-        total = 0.0
-        if rtype == self.RECORD_TYPE[0] or rtype == self.RECORD_TYPE[1]:
-            for r in self.records:
-                if r['type'] == rtype:
-                    total += r['amount']
-        elif rtype == self.RECORD_TYPE[2] or rtype == self.RECORD_TYPE[3]:
-            for r in self.records:
-                if r['type'] == rtype:
-                    total += 1
-
-        return total
-
-    def get_user_balance(self, userid: int) -> str:
-        """ Get users balance based on int id """
-
-        balance = 0.0
-        for r in self.records:
-            if r['userid'] == userid:
-                print(f'User Found!')
-
-                if r['type'] == self.RECORD_TYPE[0]:
-                    print(f'Amount: -{r["amount"]}')
-                    balance -= r['amount']
-                    continue
-
-                if r['type'] == self.RECORD_TYPE[1]:
-                    print(f'Amount: +{r["amount"]}')
-                    balance += r['amount']
-                    continue
-
-        return balance
-
-    def run(self, logger, *args, **kwargs):
-        logger.info(f'Running protocol {self.__class__.__name__} on binary file: {self._filepath}')
-
-        logger.info(f'Total amount debit: ${self.get_type_total(self.RECORD_TYPE[0]):.2f}')
-        logger.info(f'Total amount credit: ${self.get_type_total(self.RECORD_TYPE[1]):.2f}')
-        logger.info(f'Total autopay starts: {self.get_type_total(self.RECORD_TYPE[2]):.0f}')
-        logger.info(f'Total autopay ends: {self.get_type_total(self.RECORD_TYPE[3]):.0f}')
-
-        if 'userid' in kwargs.keys():
-            uid = kwargs['userid']
-            logger.info(f'Balance for userID {uid}: ${self.get_user_balance(uid):.2f}')
+    def run(self):
+        pass
