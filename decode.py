@@ -23,6 +23,12 @@ if __name__ == '__main__':
 
     data = bfile.read_bytes()
 
+    # getattr(protos, protos.Mps7(data).run())
+
+    result = protos.Mps7(data).run()
+
+    print(result)
+
     # print(tuple(data))
 
     # p = getattr(protos, protocol.title())(data)
