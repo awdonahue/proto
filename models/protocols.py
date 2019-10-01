@@ -79,12 +79,12 @@ class Mps7:
 
         self.LOGGER.info('Decoding structured bytes data...')
         self._records = []
-        for br in self._drecords:
+        for dr in self._drecords:
             self._records.append((
-                br[0],
-                struct.unpack('!I', bytes(br[self.RBYTES[0]:sum(self.RBYTES[:2])]))[0],
-                struct.unpack('!Q', bytes(br[sum(self.RBYTES[:2]):sum(self.RBYTES[:3])]))[0],
-                struct.unpack('!d', bytes(br[sum(self.RBYTES[:3]):sum(self.RBYTES)]))[0] if len(br) == self.TOTAL_RBYTES else None,
+                dr[0],
+                struct.unpack('!I', bytes(dr[self.RBYTES[0]:sum(self.RBYTES[:2])]))[0],
+                struct.unpack('!Q', bytes(dr[sum(self.RBYTES[:2]):sum(self.RBYTES[:3])]))[0],
+                struct.unpack('!d', bytes(dr[sum(self.RBYTES[:3]):sum(self.RBYTES)]))[0] if len(dr) == self.TOTAL_RBYTES else None,
             ))
         self.LOGGER.info('Finished!')
 
