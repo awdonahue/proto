@@ -8,22 +8,6 @@ from typing import List
 
 __all__ = ['Mps7']
 
-# class Protocol(ABC):
-#     @abstractmethod
-#     def _stucture_data(self):
-#         """ Structure the bytes data for decoding """
-#         pass
-
-#     @abstractmethod
-#     def _decode(self):
-#         """ Decode the bytes to protocol format """
-#         pass
-
-#     @abstractmethod
-#     def run(self):
-#         """ Run protocol on data and return JSON results """
-#         pass
-
 class Mps7:
     """
     Decode binary data
@@ -90,15 +74,6 @@ class Mps7:
 
         assert len(self._records) == len(self._drecords), 'Decoded records count does not match binary records count'
         self.LOGGER.debug('Decoded records:\n %s', '\n'.join(map(str, self._records)))
-
-    # @property
-    # def version(self) -> int:
-    #     """ Get binary file protocol version """
-    #     return self._header_data[sum(self.HBYTES[:1]):sum(self.HBYTES[:2])]
-
-    # @property
-    # def records(self) -> List[tuple]:
-    #     return self._records
 
     def _get_type_total(self, record_type: int) -> float:
         """ Get total count of record type """
