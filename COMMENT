@@ -5,6 +5,5 @@
 - Pipenv (https://docs.pipenv.org/en/latest/)
 
 ## Setup
-- From project dir, in a terminal, run `pipenv run python main.py -h` to get program usage
-- To run this specific protocol, run `pipenv run python main.py mps7 txnlog.dat`
-
+- From project root run `pipenv run python main.py -h` to get program usage
+- To decode a specific file, run `pipenv run python decode.py txnlog.dat`
